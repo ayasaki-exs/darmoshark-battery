@@ -20,15 +20,15 @@ git+https://github.com/ayasaki-exs/darmoshark-battery.git
 ```
 
 Publish the repository (or replace `url` with your own) before submitting to
-the AUR. For a local test without publishing, change the `source` line to the
-local checkout:
+the AUR. For a local test without publishing, replace the `source` line with
+the absolute path to your checkout:
 
 ```bash
-source=("git+file://${startdir}/../..")
+source=("git+file:///home/akuma/repos/darmoshark-battery")
 ```
 
-and run `makepkg -si` from this directory. Revert that line before generating
-the AUR `.SRCINFO`.
+and run `makepkg -si` from this directory. Revert that line (and regenerate
+`.SRCINFO`) before submitting.
 
 ## Build and install
 
