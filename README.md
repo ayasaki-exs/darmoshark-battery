@@ -56,6 +56,14 @@ The module takes the receiver's configuration interface over from `hid-generic`
 without a reboot; only that interface is reprobed. The mouse/keyboard/consumer
 interfaces of the same VID/PID keep working.
 
+### Arch Linux (AUR)
+
+`packaging/aur/` provides the `darmoshark-battery-dkms-git` package. It installs
+the module source into `/usr/src/darmoshark-battery-<tag>/` and lets the Arch
+`dkms` pacman hook build it for every installed kernel — no `.install` script.
+See [packaging/aur/README.md](packaging/aur/README.md) for the local-source
+override while the GitHub repository is not published yet.
+
 ## Verify
 
 ```sh

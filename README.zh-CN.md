@@ -51,6 +51,13 @@ printf 'darmoshark_battery\n' | sudo tee /etc/modules-load.d/darmoshark-battery.
 模块会在不重启的情况下从 `hid-generic` 接管接收器的配置接口，只重绑该接口；
 同一 VID/PID 的鼠标、键盘、消费者接口保持可用。
 
+### Arch Linux（AUR）
+
+`packaging/aur/` 提供 `darmoshark-battery-dkms-git` 包：模块源码装到
+`/usr/src/darmoshark-battery-<tag>/`，由 Arch `dkms` 的 pacman hook 为每个已装
+内核自动构建，不需要 `.install` 脚本。GitHub 仓库尚未公开时如何本地覆盖
+source，见 [packaging/aur/README.md](packaging/aur/README.md)。
+
 ## 验证
 
 ```sh
