@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  protocol:
+    name: protocol vectors
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make test
+
+  module:
+    name: kernel module build
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - run: pacman -Syu --noconfirm --needed git linux-headers bc pahole libelf
+      - uses: actions/checkout@v4
+      - run: make KDIR=/usr/src/linux
