@@ -38,6 +38,11 @@ matching headers also pulls `pahole` and `libelf`. `bc` is not needed: external
 module builds reuse the pre-generated kernel headers; it is only required when
 preparing a kernel tree from source.
 
+`linux-headers` is deliberately not a hard dependency: DKMS builds for every
+installed kernel, and the headers are per-flavor optdepends of `dkms`
+(`linux-headers`, `linux-lts-headers`, `linux-zen-headers`,
+`linux-hardened-headers`). Install the ones matching the kernels you use.
+
 ```sh
 sudo pacman -S --needed linux-headers dkms
 makepkg -si
