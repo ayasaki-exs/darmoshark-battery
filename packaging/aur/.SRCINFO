@@ -7,6 +7,7 @@ pkgbase = darmoshark-battery-dkms-git
 	license = GPL-2.0-or-later
 	makedepends = git
 	depends = dkms
+	depends = pahole
 	provides = darmoshark-battery-dkms
 	conflicts = darmoshark-battery-dkms
 	source = git+https://github.com/ayasaki-exs/darmoshark-battery.git

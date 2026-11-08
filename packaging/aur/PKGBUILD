@@ -8,7 +8,10 @@ pkgdesc="Darmoshark (MOJI) mouse battery exposed as a Linux power supply (DKMS)"
 arch=('any')
 url="https://github.com/ayasaki-exs/darmoshark-battery"
 license=('GPL-2.0-or-later')
-depends=('dkms')
+# The dkms pacman hook compiles the module after installation, so the BTF
+# generator belongs in depends, not makedepends. The matching kernel headers
+# (dkms optdepends, e.g. linux-headers) pull pahole as well.
+depends=('dkms' 'pahole')
 makedepends=('git')
 provides=("${_pkgname}-dkms")
 conflicts=("${_pkgname}-dkms")

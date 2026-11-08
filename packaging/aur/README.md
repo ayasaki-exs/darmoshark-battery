@@ -30,11 +30,13 @@ and revert the line (plus regenerate `.SRCINFO`) before submitting.
 
 ## Build and install
 
-The DKMS build needs the headers of every kernel you want to support. They are
-optdepends of `dkms` (for example `linux-headers`), and `linux-headers` pulls
-`pahole`/`libelf`, so installing the matching headers is enough. `bc` is not
-needed: external module builds reuse the pre-generated kernel headers; it is
-only required when preparing a kernel tree from source.
+The package declares `depends=('dkms' 'pahole')`: the DKMS build happens at
+install time through the pacman hook, so the BTF generator is a runtime
+dependency, not a `makedepends` one. The headers of every kernel you want to
+support are optdepends of `dkms` (for example `linux-headers`); installing the
+matching headers also pulls `pahole` and `libelf`. `bc` is not needed: external
+module builds reuse the pre-generated kernel headers; it is only required when
+preparing a kernel tree from source.
 
 ```sh
 sudo pacman -S --needed linux-headers dkms
