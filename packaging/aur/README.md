@@ -48,6 +48,17 @@ sudo pacman -S --needed linux-headers dkms
 makepkg -si
 ```
 
+On the first install the `modules-load.d` entry can race the `dkms` hook:
+`systemd-modules-load` may run before the module is built and log
+`Failed to insert module ... No such file or directory`. The module is
+installed a moment later; load it for the current session with:
+
+```sh
+sudo modprobe darmoshark_battery
+```
+
+The next boot loads it through `modules-load.d` (and udev's HID modalias).
+
 The package ships:
 
 - `/usr/src/darmoshark-battery-<tag>/` — module source and `dkms.conf`
