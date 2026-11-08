@@ -96,16 +96,6 @@ sudo rm /etc/modules-load.d/darmoshark-battery.conf
 sudo dkms remove darmoshark-battery/0.1.0 --all
 ```
 
-## 限制
-
-- 仅 Linux；这是通往 UPower 的桥，不是跨平台驱动。
-- 只有电量百分比；充电状态未知。
-- 模块绑定接收器的配置接口，并对同一 VID/PID 的其他接口按 `hid-generic`
-  的方式处理（输入不受影响）。
-- 厂商通道与其他工具共享（例如 OpenLogi 的 Darmoshark DPI 支持）。轮询为
-  每分钟一次并过滤响应；偶发的交错由双方既有重试处理。
-- DKMS 会随内核更新重建；安全启动环境需要像其他树外驱动一样签名。
-
 ## 协议参考
 
 帧布局、checksum 以及 `dms`/`dms_v2` 响应偏移在 OpenLogi 的 Darmoshark 分支

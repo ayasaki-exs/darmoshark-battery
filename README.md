@@ -105,18 +105,6 @@ sudo rm /etc/modules-load.d/darmoshark-battery.conf
 sudo dkms remove darmoshark-battery/0.1.0 --all
 ```
 
-## Limits
-
-- Linux only; this is a bridge to UPower, not a cross-platform driver.
-- Battery percentage only; charging state is unknown.
-- The module binds the receiver's configuration interface and handles the other
-  interfaces of the same VID/PID like `hid-generic` (input still works).
-- The vendor channel is shared with other tools (for example OpenLogi's
-  Darmoshark DPI support). Polling is once a minute and filters responses; an
-  occasional colliding exchange is retried by both sides.
-- DKMS rebuilds the module on kernel updates; secure-boot setups need a signed
-  module like any out-of-tree driver.
-
 ## Protocol reference
 
 The frame layout, checksum and `dms`/`dms_v2` response offsets were
