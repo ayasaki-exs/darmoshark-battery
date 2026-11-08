@@ -61,8 +61,9 @@ interfaces of the same VID/PID keep working.
 `packaging/aur/` provides the `darmoshark-battery-dkms-git` package. It installs
 the module source into `/usr/src/darmoshark-battery-<tag>/` and lets the Arch
 `dkms` pacman hook build it for every installed kernel — no `.install` script.
-See [packaging/aur/README.md](packaging/aur/README.md) for the local-source
-override while the GitHub repository is not published yet.
+The package source is <https://github.com/ayasaki-exs/darmoshark-battery>; see
+[packaging/aur/README.md](packaging/aur/README.md) for building and submitting
+it.
 
 ## Verify
 

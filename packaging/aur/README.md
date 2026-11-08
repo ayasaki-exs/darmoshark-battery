@@ -10,25 +10,23 @@ conventions used by `nvidia-dkms` and other DKMS packages:
 - there is **no** `.install` script and no kernel module built at package-build
   time — installing the `dkms.conf` path is what the hook acts on.
 
-## Source and the local-only checkout
+## Source
 
-AUR requires a public source. This repository is currently local-only, so the
-PKGBUILD points at the intended public URL:
+AUR requires a public source. The PKGBUILD points at the public repository:
 
 ```text
 git+https://github.com/ayasaki-exs/darmoshark-battery.git
 ```
 
-Publish the repository (or replace `url` with your own) before submitting to
-the AUR. For a local test without publishing, replace the `source` line with
-the absolute path to your checkout:
+The `v0.1.0` tag is pushed; `pkgver()` uses `git describe` and the DKMS source
+directory keeps the last tag version. If you work on a local-only checkout,
+replace the `source` line with the absolute path to it:
 
 ```bash
 source=("git+file:///home/akuma/repos/darmoshark-battery")
 ```
 
-and run `makepkg -si` from this directory. Revert that line (and regenerate
-`.SRCINFO`) before submitting.
+and revert the line (plus regenerate `.SRCINFO`) before submitting.
 
 ## Build and install
 
@@ -57,16 +55,35 @@ upower -d | grep -A15 -i darmoshark
 
 ## AUR metadata
 
-Generate `.SRCINFO` after changing the source to the public URL:
+Generate `.SRCINFO` after any PKGBUILD change:
 
 ```sh
 makepkg --printsrcinfo > .SRCINFO
 ```
 
 The `-git` package uses `sha256sums=('SKIP')`, which is correct for a VCS
-source. Once the project publishes a `v<version>` release tarball, a
-release-versioned `darmoshark-battery-dkms` package can reuse the same
-`package()` body with the tarball source and a real checksum.
+source. Now that `v0.1.0` is tagged on GitHub, a release-versioned
+`darmoshark-battery-dkms` package can use the tag archive and a real checksum
+instead.
+
+## Submitting to the AUR
+
+AUR uses its own git remote and an AUR account with an SSH key. For the first
+submission, initialize a repository with the AUR remote, add `PKGBUILD` and
+`.SRCINFO`, and push to `master`:
+
+```sh
+git init darmoshark-battery-dkms-git
+cd darmoshark-battery-dkms-git
+cp /path/to/darmoshark-battery/packaging/aur/{PKGBUILD,.SRCINFO} .
+git add PKGBUILD .SRCINFO
+git commit -m "Initial import"
+git remote add origin ssh://aur@aur.archlinux.org/darmoshark-battery-dkms-git.git
+git push origin master
+```
+
+For later updates, clone the AUR repository, refresh `.SRCINFO`, commit and
+push.
 
 ## Notes
 
