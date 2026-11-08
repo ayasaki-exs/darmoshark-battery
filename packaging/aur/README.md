@@ -5,8 +5,9 @@ conventions used by `nvidia-dkms` and other DKMS packages:
 
 - the package installs the module **source** into
   `/usr/src/darmoshark-battery-<tag>/`;
-- `depends=('dkms')`; the `dkms` package's pacman hooks build and install the
-  module for every installed kernel (and rebuild it on kernel updates);
+- `depends=('dkms' 'pahole')`; the `dkms` package's pacman hooks build and
+  install the module for every installed kernel (and rebuild it on kernel
+  updates), and `pahole` provides the BTF step;
 - there is **no** `.install` script and no kernel module built at package-build
   time — installing the `dkms.conf` path is what the hook acts on.
 
@@ -86,24 +87,32 @@ source. Now that `v0.1.0` is tagged on GitHub, a release-versioned
 `darmoshark-battery-dkms` package can use the tag archive and a real checksum
 instead.
 
+AUR requires the package repository to carry a `LICENSE` file; the current
+guidelines prefer 0BSD (RFC 0040). `LICENSE` in this directory is that file
+for the AUR package sources. The package's `license=('GPL-2.0-or-later')`
+field and the license installed under `/usr/share/licenses/` describe the
+**software**, not the AUR files.
+
+`check()` runs `make test` (the host protocol vectors) during `makepkg`.
+
 ## Submitting to the AUR
 
-AUR uses its own git remote and an AUR account with an SSH key. For the first
-submission, initialize a repository with the AUR remote, add `PKGBUILD` and
-`.SRCINFO`, and push to `master`:
+AUR uses its own git remote, an AUR account, and an SSH key. Clone the
+(possibly empty) package repository, copy `PKGBUILD`, `.SRCINFO` and
+`LICENSE`, and push to `master`:
 
 ```sh
-git init darmoshark-battery-dkms-git
+git -c init.defaultBranch=master clone \
+  ssh://aur@aur.archlinux.org/darmoshark-battery-dkms-git.git
 cd darmoshark-battery-dkms-git
-cp /path/to/darmoshark-battery/packaging/aur/{PKGBUILD,.SRCINFO} .
-git add PKGBUILD .SRCINFO
+cp /path/to/darmoshark-battery/packaging/aur/{PKGBUILD,.SRCINFO,LICENSE} .
+git add PKGBUILD .SRCINFO LICENSE
 git commit -m "Initial import"
-git remote add origin ssh://aur@aur.archlinux.org/darmoshark-battery-dkms-git.git
-git push origin master
+git push
 ```
 
-For later updates, clone the AUR repository, refresh `.SRCINFO`, commit and
-push.
+AUR only accepts `master`. For later updates, clone the AUR repository,
+refresh `.SRCINFO`, and push the changed files.
 
 ## Notes
 

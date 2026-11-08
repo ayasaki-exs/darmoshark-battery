@@ -28,6 +28,11 @@ pkgver() {
   )
 }
 
+check() {
+  cd "$_pkgname"
+  make test
+}
+
 package() {
   cd "$_pkgname"
 
@@ -42,6 +47,7 @@ package() {
   install -d "$pkgdir/usr/src/${_pkgname}-${tagver}"
   cp -a . "$pkgdir/usr/src/${_pkgname}-${tagver}/"
   rm -rf "$pkgdir/usr/src/${_pkgname}-${tagver}/.git" \
+    "$pkgdir/usr/src/${_pkgname}-${tagver}/build" \
     "$pkgdir/usr/src/${_pkgname}-${tagver}/packaging"
   sed -i "s/^PACKAGE_VERSION=.*/PACKAGE_VERSION=\"${tagver}\"/" \
     "$pkgdir/usr/src/${_pkgname}-${tagver}/dkms.conf"
