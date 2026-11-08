@@ -17,6 +17,6 @@ jobs:
     runs-on: ubuntu-latest
     container: archlinux:base-devel
     steps:
-      - run: pacman -Syu --noconfirm --needed git linux-headers bc pahole libelf
+      - run: pacman -Syu --noconfirm --needed git linux-headers
       - uses: actions/checkout@v7
       - run: make KDIR=/usr/src/linux

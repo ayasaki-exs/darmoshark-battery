@@ -27,7 +27,10 @@ mouse -> vendor HID channel -> darmoshark_battery -> power_supply -> UPower -> S
 - Linux with `CONFIG_HIDRAW` (the module keeps the configuration interface's
   hidraw node available for other tools).
 - Kernel headers for the running kernel and DKMS.
-- On Arch: `sudo pacman -S --needed linux-headers dkms bc pahole`.
+- On Arch: `sudo pacman -S --needed linux-headers dkms`. `linux-headers` pulls
+  the BTF tools (`pahole`, `libelf`) the module build needs; `bc` is only used
+  when building or preparing a kernel tree from source, not for this external
+  module.
 
 The module is GPL-2.0-or-later.
 

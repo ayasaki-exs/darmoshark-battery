@@ -32,7 +32,9 @@ and revert the line (plus regenerate `.SRCINFO`) before submitting.
 
 The DKMS build needs the headers of every kernel you want to support. They are
 optdepends of `dkms` (for example `linux-headers`), and `linux-headers` pulls
-`pahole`/`libelf`, so installing the matching headers is enough:
+`pahole`/`libelf`, so installing the matching headers is enough. `bc` is not
+needed: external module builds reuse the pre-generated kernel headers; it is
+only required when preparing a kernel tree from source.
 
 ```sh
 sudo pacman -S --needed linux-headers dkms

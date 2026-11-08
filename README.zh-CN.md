@@ -24,7 +24,9 @@ Logitech 鼠标能在桌面电源部件里显示电量，是因为内核 `hid-lo
 
 - Linux，开启 `CONFIG_HIDRAW`（模块会保留配置接口的 hidraw 节点，供其他工具使用）。
 - 当前内核的 headers 和 DKMS。
-- Arch：`sudo pacman -S --needed linux-headers dkms bc pahole`。
+- Arch：`sudo pacman -S --needed linux-headers dkms`。`linux-headers` 会带上
+  模块构建需要的 BTF 工具（`pahole`、`libelf`）；`bc` 只在内核树自身构建/
+  prepare 时使用，这个外部模块不需要。
 
 模块许可证为 GPL-2.0-or-later。
 
