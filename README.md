@@ -5,11 +5,11 @@ A minimal, standalone Linux kernel module (DKMS) that exposes a **Darmoshark
 
 Logitech mice show their battery in desktop battery widgets because the kernel's
 `hid-logitech-hidpp` driver registers `hidpp_battery_N`; UPower then hands it to
-Solid/KDE. Darmoshark's receiver has no such kernel driver, and UPower has no
-userspace API for adding a device. This module speaks the vendor's 64-byte
-power query on the configuration collection (`usage page 0xff0a`) and
-registers a peripheral `power_supply`, so the battery appears in the same
-places:
+Solid/KDE. Darmoshark's receivers have no such kernel driver, and UPower has no
+userspace API for adding a device. This module speaks the vendor's battery
+query on the configuration collection (`usage page 0xff0a` on Nordic devices,
+`usage page 0x008c` feature report `0x51` on Telink devices) and registers a
+peripheral `power_supply`, so the battery appears in the same places:
 
 ```text
 mouse -> vendor HID channel -> darmoshark_battery -> power_supply -> UPower -> Solid -> KDE Power & Battery
@@ -21,6 +21,11 @@ mouse -> vendor HID channel -> darmoshark_battery -> power_supply -> UPower -> S
 |---|---|
 | `1915:073c` | Darmoshark M3S Pro (wired) |
 | `1915:0723` | Darmoshark M3S Pro (2.4 GHz, 1K NRF receiver) |
+| `248a:ff12` | Darmoshark M3 (wired) |
+| `248a:ff18` | Darmoshark M3S (wired) |
+| `248a:ff10` | Darmoshark N3 (wired) |
+| `248a:ff30` | Darmoshark M3 / M3S / N3 (2.4 GHz, 1K Telink receiver) |
+| `248a:ff31` | Darmoshark M3 / M3S / N3 (2.4 GHz, 2K Telink receiver) |
 
 ## Requirements
 
@@ -77,9 +82,9 @@ upower -e | grep darmoshark
 upower -d
 ```
 
-`upower -d` should list a device whose `model` is `Darmoshark M3S Pro ...` and
-whose `percentage` matches the mouse. KDE's tray **Power and Battery** applet
-then lists it.
+`upower -d` should list a device whose `model` is `Darmoshark ...` and whose
+`percentage` matches the mouse. KDE's tray **Power and Battery** applet then
+lists it.
 
 The percentage is the only mapped field: the protocol's charging-state byte is
 not decoded yet, so `status` stays `unknown`.
@@ -93,9 +98,10 @@ make probe
 sudo ./build/darmoshark-probe
 ```
 
-It finds the configuration hidraw node (`0xff0a` usage page), sends the power
-query, and prints the percentage and the `dms`/`dms_v2` layout. It needs write
-access to the node (root, or a hidraw udev rule for `1915:0723`/`1915:073c`).
+It finds the configuration hidraw node (`0xff0a` on Nordic or `0x008c` on
+Telink), sends the power query, and prints the percentage and response layout
+(`dms`/`dms_v2` on Nordic, `telink_dms` on Telink). It needs write access to
+the node (root, or a hidraw udev rule for `1915:0723`/`073c` or `248a:*`).
 
 ## Uninstall
 
@@ -107,15 +113,16 @@ sudo dkms remove darmoshark-battery/0.1.0 --all
 
 ## Protocol reference
 
-The frame layout, checksum and `dms`/`dms_v2` response offsets were
-reverse-engineered and verified in the OpenLogi Darmoshark branch:
+- **Nordic (`1915`, usage page `0xff0a`)**: frame layout, checksum and
+  `dms`/`dms_v2` response offsets were reverse-engineered and verified in the
+  OpenLogi Darmoshark branch (`crates/openlogi-device/src/darmoshark.rs`,
+  `docs/DARMOSHARK.md` — <https://github.com/ayasaki-exs/OpenLogi/tree/feat/darmoshark-driver>).
+- **Telink (`248a`, usage page `0x008c` feature report `0x51`)**: documented in
+  <https://github.com/Barba2k2/darmoshark-m3-configurator> and verified in
+  <https://github.com/swarlex/SwarlexBattery>.
 
-- `crates/openlogi-device/src/darmoshark.rs`
-- `docs/DARMOSHARK.md`
-- <https://github.com/ayasaki-exs/OpenLogi/tree/feat/darmoshark-driver>
-
-`darmoshark_protocol.h` is the single C implementation here; `make test` pins
-the same wire facts the Rust tests assert. If the protocol changes, update both.
+See [docs/PROTOCOL.md](docs/PROTOCOL.md). `darmoshark_protocol.h` is the single
+C implementation here; `make test` pins the wire vectors.
 
 ## License
 

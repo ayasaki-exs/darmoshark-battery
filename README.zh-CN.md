@@ -6,8 +6,9 @@
 Logitech 鼠标能在桌面电源部件里显示电量，是因为内核 `hid-logitech-hidpp`
 驱动创建了 `hidpp_battery_N`，UPower 再通过 Solid 交给 KDE。Darmoshark 的
 接收器没有这样的内核驱动，而 UPower 又不提供用户态注册设备的 API。本模块
-在配置集合（usage page `0xff0a`）上发送厂商的 64 字节电量查询，并注册一个
-外设 `power_supply`，于是电量会出现在同样的位置：
+在配置集合上发送厂商的电量查询（Nordic 设备使用 usage page `0xff0a` 的 64 字节
+报告，Telink 设备使用 usage page `0x008c` 的 `0x51` feature 报告），并注册
+一个外设 `power_supply`，于是电量会出现在同样的位置：
 
 ```text
 鼠标 -> 厂商 HID 通道 -> darmoshark_battery -> power_supply -> UPower -> Solid -> KDE 电源和电池
@@ -19,6 +20,11 @@ Logitech 鼠标能在桌面电源部件里显示电量，是因为内核 `hid-lo
 |---|---|
 | `1915:073c` | Darmoshark M3S Pro（有线） |
 | `1915:0723` | Darmoshark M3S Pro（2.4 GHz，1K NRF 接收器） |
+| `248a:ff12` | Darmoshark M3（有线） |
+| `248a:ff18` | Darmoshark M3S（有线） |
+| `248a:ff10` | Darmoshark N3（有线） |
+| `248a:ff30` | Darmoshark M3 / M3S / N3（2.4 GHz，1K Telink 接收器） |
+| `248a:ff31` | Darmoshark M3 / M3S / N3（2.4 GHz，2K Telink 接收器） |
 
 ## 依赖
 
@@ -70,8 +76,8 @@ upower -e | grep darmoshark
 upower -d
 ```
 
-`upower -d` 应出现 `model` 为 `Darmoshark M3S Pro ...`、`percentage` 与鼠标
-一致的设备；KDE 托盘「电源和电池」部件会列出它。
+`upower -d` 应出现 `model` 为 `Darmoshark ...`、`percentage` 与鼠标一致的设备；
+KDE 托盘「电源和电池」部件会列出它。
 
 目前只映射百分比：协议的充电状态字节尚未解码，所以 `status` 保持 `unknown`。
 
@@ -84,9 +90,10 @@ make probe
 sudo ./build/darmoshark-probe
 ```
 
-它会找到配置 hidraw 节点（`0xff0a` usage page），发送电量查询，打印百分比和
-`dms`/`dms_v2` 布局。需要对节点有写权限（root，或给 `1915:0723`/`1915:073c`
-加 hidraw udev 规则）。
+它会找到配置 hidraw 节点（Nordic 为 `0xff0a`，Telink 为 `0x008c`），发送
+电量查询，打印百分比和响应布局（Nordic 为 `dms`/`dms_v2`，Telink 为
+`telink_dms`）。需要对节点有写权限（root，或给 `1915:0723`/`073c` 或
+`248a:*` 加 hidraw udev 规则）。
 
 ## 卸载
 
@@ -98,15 +105,16 @@ sudo dkms remove darmoshark-battery/0.1.0 --all
 
 ## 协议参考
 
-帧布局、checksum 以及 `dms`/`dms_v2` 响应偏移在 OpenLogi 的 Darmoshark 分支
-中逆向并验证：
+- **Nordic（`1915`，usage page `0xff0a`）**：帧布局、checksum 以及
+  `dms`/`dms_v2` 响应偏移在 OpenLogi 的 Darmoshark 分支中逆向并验证
+  （`crates/openlogi-device/src/darmoshark.rs`、`docs/DARMOSHARK.md` —
+  <https://github.com/ayasaki-exs/OpenLogi/tree/feat/darmoshark-driver>）。
+- **Telink（`248a`，usage page `0x008c` feature 报告 `0x51`）**：记录于
+  <https://github.com/Barba2k2/darmoshark-m3-configurator>，并在
+  <https://github.com/swarlex/SwarlexBattery> 中验证。
 
-- `crates/openlogi-device/src/darmoshark.rs`
-- `docs/DARMOSHARK.md`
-- <https://github.com/ayasaki-exs/OpenLogi/tree/feat/darmoshark-driver>
-
-`darmoshark_protocol.h` 是本仓库唯一的 C 实现；`make test` 锁定与 Rust 测试
-相同的线上事实。协议变化时两边都要更新。
+详见 [docs/PROTOCOL.md](docs/PROTOCOL.md)。`darmoshark_protocol.h` 是本仓库
+唯一的 C 实现；`make test` 锁定协议测试向量。
 
 ## 许可证
 
