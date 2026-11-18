@@ -28,6 +28,7 @@ int main(void)
 {
 	ds_u8 out[DS_REPORT_LEN];
 	ds_u8 resp[DS_REPORT_LEN];
+	ds_u8 telink[DS_TELINK_REPORT_LEN];
 	ds_u8 percent = 0;
 	unsigned int i;
 	unsigned int sum;
@@ -87,6 +88,65 @@ int main(void)
 	resp[6] = 200;
 	CHECK(!darmoshark_parse_power(resp, DS_REPORT_LEN, &percent));
 	CHECK(!darmoshark_parse_power(resp, 11, &percent));
+
+	/* Telink bond primer command `[0x51, 0x03, 0, ...]`. */
+	darmoshark_build_telink_feature(telink, DS_TELINK_OP_BOND);
+	CHECK(telink[0] == DS_TELINK_REPORT_ID);
+	CHECK(telink[1] == DS_TELINK_OP_BOND);
+	for (i = 2; i < DS_TELINK_REPORT_LEN; i++)
+		CHECK(telink[i] == 0);
+
+	/* Telink identify/battery command `[0x51, 0x06, 0, ...]`. */
+	darmoshark_build_telink_feature(telink, DS_TELINK_OP_IDENTIFY);
+	CHECK(telink[0] == DS_TELINK_REPORT_ID);
+	CHECK(telink[1] == DS_TELINK_OP_IDENTIFY);
+	for (i = 2; i < DS_TELINK_REPORT_LEN; i++)
+		CHECK(telink[i] == 0);
+
+	/* Telink echo matching. */
+	CHECK(darmoshark_is_telink_echo(telink, DS_TELINK_REPORT_LEN,
+					DS_TELINK_OP_IDENTIFY));
+	CHECK(!darmoshark_is_telink_echo(telink, DS_TELINK_REPORT_LEN,
+					 DS_TELINK_OP_BOND));
+	CHECK(!darmoshark_is_telink_echo(telink, 1, DS_TELINK_OP_IDENTIFY));
+	telink[0] = 0x52;
+	CHECK(!darmoshark_is_telink_echo(telink, DS_TELINK_REPORT_LEN,
+					 DS_TELINK_OP_IDENTIFY));
+
+	/* Telink valid identify response with 87% battery. */
+	memset(telink, 0, sizeof(telink));
+	telink[0] = DS_TELINK_REPORT_ID;
+	telink[1] = DS_TELINK_OP_IDENTIFY;
+	telink[2] = DS_TELINK_STATUS_OK;
+	telink[4] = 0x8a;
+	telink[5] = 0x24;
+	telink[6] = 0x12;
+	telink[7] = 0xff;
+	telink[8] = 0x09;
+	telink[9] = 0x02;
+	telink[11] = 87;
+	percent = 0;
+	CHECK(darmoshark_parse_telink_power(telink, DS_TELINK_REPORT_LEN,
+					    &percent));
+	CHECK(percent == 87);
+
+	/* Telink invalid cases: 0%, >100%, bad status, wrong opcode, short. */
+	telink[11] = 0;
+	CHECK(!darmoshark_parse_telink_power(telink, DS_TELINK_REPORT_LEN,
+					     &percent));
+	telink[11] = 101;
+	CHECK(!darmoshark_parse_telink_power(telink, DS_TELINK_REPORT_LEN,
+					     &percent));
+	telink[11] = 87;
+	telink[2] = 0;
+	CHECK(!darmoshark_parse_telink_power(telink, DS_TELINK_REPORT_LEN,
+					     &percent));
+	telink[2] = DS_TELINK_STATUS_OK;
+	telink[1] = DS_TELINK_OP_BOND;
+	CHECK(!darmoshark_parse_telink_power(telink, DS_TELINK_REPORT_LEN,
+					     &percent));
+	telink[1] = DS_TELINK_OP_IDENTIFY;
+	CHECK(!darmoshark_parse_telink_power(telink, 11, &percent));
 
 	if (failures) {
 		fprintf(stderr, "%d check(s) failed\n", failures);

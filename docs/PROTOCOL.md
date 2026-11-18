@@ -1,19 +1,24 @@
-# Darmoshark power protocol (the battery slice)
+# Darmoshark power protocols (the battery slice)
 
-This is the only part of the vendor protocol the module needs: the power query
-and the two response layouts. The full reverse-engineering lives in OpenLogi's
+This is the only part of the vendor protocols the module needs: the power
+queries and response layouts for both Darmoshark chip families.
+`darmoshark_protocol.h` holds the shared C implementation and
+`tests/protocol_test.c` pins the wire facts.
+
+## Nordic family (`1915`)
+
+The reverse-engineering for the Nordic (`1915`) family lives in OpenLogi's
 Darmoshark branch (`crates/openlogi-device/src/darmoshark.rs` and
-`docs/DARMOSHARK.md`); `darmoshark_protocol.h` mirrors that codec and
-`tests/protocol_test.c` pins the same wire facts.
+`docs/DARMOSHARK.md`).
 
-## Transport
+### Transport
 
 - Configuration collection: usage page `0xff0a`, usage `0x0001`.
 - Non-numbered 64-byte input/output report pair.
 - Output endpoint `0x04`, input endpoint `0x84` on the 1K NRF receiver
   (`1915:0723`). The wired mouse (`1915:073c`) exposes the same collection.
 
-## Frame layout
+### Frame layout
 
 Every command is a 64-byte output report:
 
@@ -31,7 +36,7 @@ The checksum byte is `0xa1 - (sum(bytes[0..62]) & 0xff)`.
 `0x40` is set when the command goes through the 2.4 GHz receiver; the wired
 device expects bit 6 clear.
 
-## Power query
+### Power query
 
 `cmd_power = [1, 0, 129, 1]` followed by the checksum:
 
@@ -50,7 +55,7 @@ work-mode bit, so mask it.
 The handshake response already carries the power fields; the module sends the
 same command for each poll.
 
-## Response layouts
+### Response layouts
 
 The device family has two layouts. Detect `dms_v2` from the response itself:
 
@@ -69,13 +74,56 @@ Only the percentage is used. A value above 100 is not a reading; the module
 keeps its last known value. The charging-state byte is not mapped yet, so the
 power supply reports `POWER_SUPPLY_STATUS_UNKNOWN` rather than guessing.
 
+## Telink family (`248a`)
+
+The Telink (`248a`) `dms` contract is documented in
+[Barba2k2/darmoshark-m3-configurator](https://github.com/Barba2k2/darmoshark-m3-configurator)
+and verified in
+[swarlex/SwarlexBattery](https://github.com/swarlex/SwarlexBattery).
+
+### Transport
+
+- Configuration / DFU collection: usage page `0x008c`, usage `0x0001`.
+- Feature report `0x51`: 21 bytes total (`[0] = 0x51` report ID + 20-byte
+  payload).
+- Exposed by wired mice (`248a:ff10` N3, `248a:ff12` M3, `248a:ff18` M3S) and
+  by the 2.4 GHz receivers (`248a:ff30` 1K RF Dongle, `248a:ff31` RF-2K-Link).
+
+### Power query and buffer priming
+
+Send `[0x51, 0x06, 0x00, ...]` (`SET_REPORT` on feature report `0x51`, opcode
+`0x06` = identify + battery) and poll `GET_REPORT` on feature report `0x51`
+until `resp[0] == 0x51 && resp[1] == 0x06`:
+
+- **Wired**: send `0x06`, wait 80 ms, read feature `0x51` (up to 3 attempts).
+- **2.4 GHz receiver**: replies land in the feature buffer, which retains the
+  previous reply. If `GET_REPORT` already shows `resp[1] == 0x06`, send the
+  bond read opcode `0x03` (`[0x51, 0x03, 0x00, ...]`, answered locally by the
+  receiver) and wait up to 800 ms for `resp[1] == 0x03` before sending `0x06`
+  and waiting up to 1.5 s for `resp[1] == 0x06`. A sleeping mouse does not
+  answer `0x06`, preventing stale readings from appearing fresh.
+
+### Response layout
+
+| Byte | Meaning |
+|---|---|
+| `0` | Report ID (`0x51`) |
+| `1` | Echoed opcode (`0x06`) |
+| `2` | Status (`1` = ok) |
+| `4..5` | Mouse VID (little-endian) |
+| `6..7` | Mouse PID (little-endian) |
+| `8..9` | Firmware version (little-endian) |
+| `11` | Battery percentage (`1..100`; `0` means no reading) |
+
+Values of `0` or above `100`, or responses with `resp[2] != 1`, are ignored.
+
 ## What the module does with it
 
 1. Every `poll_ms` (default 60 s; `retry_ms` until the first successful read),
-   send the power query and wait up to 1.5 s for a matching input report.
-2. Parse the percentage (valid values 0–100).
+   send the family's power query and wait up to 1.5 s for a matching response.
+2. Parse the percentage (valid values 0–100 on Nordic, 1–100 on Telink).
 3. On the first successful read, register a `power_supply` named
    `darmoshark_battery_N` with `type=Battery`, `scope=Device`,
-   `model_name=Darmoshark M3S Pro ...`, and `capacity=<percentage>`.
+   `model_name=Darmoshark ...`, and `capacity=<percentage>`.
 4. Call `power_supply_changed()` when the percentage changes, so UPower emits a
    property update. Charging state stays `unknown`.
