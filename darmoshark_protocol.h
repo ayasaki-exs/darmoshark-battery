@@ -1,24 +1,26 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
- * Darmoshark (MOJI) vendor HID protocol — the minimal battery slice.
+ * Darmoshark (MOJI) vendor HID protocols — the minimal battery slice.
  *
- * The wire format below is the one documented and verified in OpenLogi's
- * `crates/openlogi-device/src/darmoshark.rs` (branch `feat/darmoshark-driver`).
  * This header is shared by the kernel module, the userspace probe and the
- * host test, so there is exactly one C implementation of the frame layout.
+ * host test, so there is exactly one C implementation of the frame layouts:
  *
- * Keep it in sync with the Rust codec. tests/protocol_test.c pins the same
- * wire facts the Rust tests assert, so a drift shows up as a red test.
+ * 1. Nordic (1915) 64-byte non-numbered input/output report pair on usage page
+ *    0xff0a, usage 0x0001, verified in OpenLogi (`darmoshark.rs`, branch
+ *    `feat/darmoshark-driver`).
  *
- * Frame (64 bytes, non-numbered input/output report pair on usage page
- * 0xff0a, usage 0x0001):
+ *    [0]      operation type; bit 6 (0x40) = 2.4 GHz work mode
+ *    [1]      packet index / sub-index
+ *    [2]      command opcode
+ *    [3]      sub-command
+ *    [4..62]  payload
+ *    [63]     checksum (the whole report sums to 0xa1 mod 256)
  *
- *   [0]      operation type; bit 6 (0x40) = 2.4 GHz work mode
- *   [1]      packet index / sub-index
- *   [2]      command opcode
- *   [3]      sub-command
- *   [4..62]  payload
- *   [63]     checksum (the whole report sums to 0xa1 mod 256)
+ * 2. Telink (248a) 21-byte feature report 0x51 on usage page 0x008c, usage
+ *    0x0001 (`dms` contract), documented in `darmoshark-m3-configurator` and
+ *    verified in SwarlexBattery.
+ *
+ * Keep it in sync with tests/protocol_test.c.
  */
 #ifndef DARMOSHARK_PROTOCOL_H
 #define DARMOSHARK_PROTOCOL_H
@@ -92,6 +94,70 @@ static inline int darmoshark_parse_power(const ds_u8 *resp, unsigned int len,
 	dms_v2 = resp[6] == 0x15 && resp[7] == 0x19;
 	value = dms_v2 ? resp[11] : resp[6];
 	if (value > 100)
+		return 0;
+
+	*percent = value;
+	return 1;
+}
+
+#define DS_TELINK_REPORT_ID 0x51
+#define DS_TELINK_REPORT_LEN 21
+#define DS_TELINK_OP_BOND 0x03
+#define DS_TELINK_OP_IDENTIFY 0x06
+#define DS_TELINK_STATUS_OK 1
+
+/*
+ * Build a 21-byte Telink feature report `[0x51, opcode, 0, ...]` on usage page
+ * 0x008c. Opcode 0x06 queries identity and battery; opcode 0x03 reads receiver
+ * bond info to prime the feature buffer before a wireless 0x06 read.
+ */
+static inline void darmoshark_build_telink_feature(ds_u8 *out, ds_u8 opcode)
+{
+	unsigned int i;
+
+	for (i = 0; i < DS_TELINK_REPORT_LEN; i++)
+		out[i] = 0;
+
+	out[0] = DS_TELINK_REPORT_ID;
+	out[1] = opcode;
+}
+
+/*
+ * Whether a feature report buffer from report ID 0x51 echoes `opcode`.
+ */
+static inline int darmoshark_is_telink_echo(const ds_u8 *resp,
+					    unsigned int len, ds_u8 opcode)
+{
+	return len >= 2 && resp[0] == DS_TELINK_REPORT_ID && resp[1] == opcode;
+}
+
+/*
+ * Parse the battery percentage out of a Telink 0x51 identify (0x06) response:
+ *   [0]      report ID (0x51)
+ *   [1]      opcode echo (0x06)
+ *   [2]      status (1 = ok)
+ *   [4..5]   vendor ID (little-endian)
+ *   [6..7]   product ID (little-endian)
+ *   [8..9]   firmware version (little-endian)
+ *   [11]     battery percentage (1..100; 0 means no reading)
+ *
+ * Returns 1 and stores the percentage on success, 0 otherwise.
+ */
+static inline int darmoshark_parse_telink_power(const ds_u8 *resp,
+						unsigned int len,
+						ds_u8 *percent)
+{
+	ds_u8 value;
+
+	if (len < 12)
+		return 0;
+	if (!darmoshark_is_telink_echo(resp, len, DS_TELINK_OP_IDENTIFY))
+		return 0;
+	if (resp[2] != DS_TELINK_STATUS_OK)
+		return 0;
+
+	value = resp[11];
+	if (value < 1 || value > 100)
 		return 0;
 
 	*percent = value;
