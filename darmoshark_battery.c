@@ -3,20 +3,24 @@
  * darmoshark_battery — expose a Darmoshark (MOJI) mouse battery as a Linux
  * power supply.
  *
- * The mouse/receiver speaks a 64-byte vendor protocol on the configuration
- * collection (usage page 0xff0a, usage 0x0001). This module implements only
- * the power query from that protocol and registers the result as a peripheral
- * power_supply. UPower picks it up and desktop battery widgets (UPower ->
- * Solid -> KDE's "Power and Battery" applet) show it the same way they show a
- * Logitech mouse whose kernel driver registers hidpp_battery_N.
+ * Supported families:
+ * - Nordic (1915): 64-byte vendor protocol on usage page 0xff0a, usage 0x0001.
+ * - Telink (248a): 21-byte feature report 0x51 on usage page 0x008c, usage
+ *   0x0001.
  *
- * Scope is deliberately minimal: battery percentage only. The protocol's
- * charging-state byte is not mapped, so the supply reports STATUS_UNKNOWN
- * instead of guessing. No DPI/profile/firmware writes happen here.
+ * This module implements only the battery query and registers the result as a
+ * peripheral power_supply. UPower picks it up and desktop battery widgets
+ * (UPower -> Solid -> KDE's "Power and Battery" applet) show it the same way
+ * they show a Logitech mouse whose kernel driver registers hidpp_battery_N.
+ *
+ * Scope is deliberately minimal: battery percentage only. The charging-state
+ * byte is not mapped, so the supply reports STATUS_UNKNOWN instead of
+ * guessing. No DPI/profile/firmware writes happen here.
  */
 
 #include <linux/atomic.h>
 #include <linux/completion.h>
+#include <linux/delay.h>
 #include <linux/device.h>
 #include <linux/hid.h>
 #include <linux/init.h>
@@ -35,7 +39,16 @@
 #define DS_WIRED_PID 0x073c
 #define DS_RECEIVER_PID 0x0723
 
+#define DS_TELINK_VENDOR_ID 0x248a
+#define DS_N3_WIRED_PID 0xff10
+#define DS_M3_WIRED_PID 0xff12
+#define DS_M3S_WIRED_PID 0xff18
+#define DS_TELINK_RECEIVER_PID 0xff30
+#define DS_TELINK_2K_RECEIVER_PID 0xff31
+
 #define DS_READ_TIMEOUT_MS 1500
+#define DS_PRIMER_TIMEOUT_MS 800
+#define DS_TELINK_POLL_STEP_MS 15
 #define DS_FIRST_POLL_MS 1000
 #define DS_MIN_INTERVAL_MS 1000
 
@@ -53,6 +66,7 @@ static struct workqueue_struct *ds_wq;
 
 struct darmoshark_device {
 	struct hid_device *hdev;
+	bool telink;
 	int wireless;
 	bool stopping;
 	struct power_supply *psy;
@@ -89,6 +103,16 @@ static const char *ds_model(u32 product)
 		return "Darmoshark M3S Pro";
 	case DS_RECEIVER_PID:
 		return "Darmoshark M3S Pro (2.4 GHz)";
+	case DS_N3_WIRED_PID:
+		return "Darmoshark N3";
+	case DS_M3_WIRED_PID:
+		return "Darmoshark M3";
+	case DS_M3S_WIRED_PID:
+		return "Darmoshark M3S";
+	case DS_TELINK_RECEIVER_PID:
+		return "Darmoshark M3 (2.4 GHz)";
+	case DS_TELINK_2K_RECEIVER_PID:
+		return "Darmoshark M3 (2.4 GHz 2K)";
 	default:
 		return "Darmoshark";
 	}
@@ -219,7 +243,7 @@ static int ds_raw_event(struct hid_device *hdev, struct hid_report *report,
 
 	(void)report;
 
-	if (!ds || size < DS_REPORT_LEN)
+	if (!ds || ds->telink || size < DS_REPORT_LEN)
 		return 0;
 	if (!darmoshark_is_power_response(data, (unsigned int)size))
 		return 0;
@@ -237,6 +261,85 @@ static int ds_raw_event(struct hid_device *hdev, struct hid_report *report,
 	return 0;
 }
 
+static int ds_telink_get(struct darmoshark_device *ds)
+{
+	memset(ds->resp_buf, 0, DS_TELINK_REPORT_LEN);
+	ds->resp_buf[0] = DS_TELINK_REPORT_ID;
+	return hid_hw_raw_request(ds->hdev, DS_TELINK_REPORT_ID, ds->resp_buf,
+				  DS_TELINK_REPORT_LEN, HID_FEATURE_REPORT,
+				  HID_REQ_GET_REPORT);
+}
+
+static int ds_telink_send(struct darmoshark_device *ds, u8 opcode)
+{
+	darmoshark_build_telink_feature(ds->cmd_buf, opcode);
+	return hid_hw_raw_request(ds->hdev, DS_TELINK_REPORT_ID, ds->cmd_buf,
+				  DS_TELINK_REPORT_LEN, HID_FEATURE_REPORT,
+				  HID_REQ_SET_REPORT);
+}
+
+static bool ds_telink_await(struct darmoshark_device *ds, u8 opcode,
+			    unsigned int timeout_ms)
+{
+	unsigned long deadline = jiffies + msecs_to_jiffies(timeout_ms);
+	int ret;
+
+	while (!READ_ONCE(ds->stopping)) {
+		ret = ds_telink_get(ds);
+		if (ret >= DS_TELINK_REPORT_LEN &&
+		    darmoshark_is_telink_echo(ds->resp_buf,
+					      (unsigned int)ret, opcode))
+			return true;
+		if (time_after_eq(jiffies, deadline))
+			break;
+		msleep(DS_TELINK_POLL_STEP_MS);
+	}
+	return false;
+}
+
+static bool ds_query_telink(struct darmoshark_device *ds, u8 *percent)
+{
+	bool got = false;
+	int i;
+	int ret;
+
+	if (ds->wireless) {
+		ret = ds_telink_get(ds);
+		if (ret >= DS_TELINK_REPORT_LEN &&
+		    darmoshark_is_telink_echo(ds->resp_buf, (unsigned int)ret,
+					      DS_TELINK_OP_IDENTIFY)) {
+			if (ds_telink_send(ds, DS_TELINK_OP_BOND) < 0 ||
+			    !ds_telink_await(ds, DS_TELINK_OP_BOND,
+					     DS_PRIMER_TIMEOUT_MS))
+				return false;
+		}
+		if (ds_telink_send(ds, DS_TELINK_OP_IDENTIFY) >= 0)
+			got = ds_telink_await(ds, DS_TELINK_OP_IDENTIFY,
+					      DS_READ_TIMEOUT_MS);
+	} else {
+		for (i = 0; i < 3 && !READ_ONCE(ds->stopping); i++) {
+			if (ds_telink_send(ds, DS_TELINK_OP_IDENTIFY) < 0)
+				break;
+			msleep(80);
+			ret = ds_telink_get(ds);
+			if (ret >= DS_TELINK_REPORT_LEN &&
+			    darmoshark_is_telink_echo(ds->resp_buf,
+						      (unsigned int)ret,
+						      DS_TELINK_OP_IDENTIFY)) {
+				got = true;
+				break;
+			}
+			msleep(100);
+		}
+	}
+
+	if (!got)
+		return false;
+
+	return darmoshark_parse_telink_power(ds->resp_buf,
+					     DS_TELINK_REPORT_LEN, percent) != 0;
+}
+
 static void ds_poll(struct work_struct *work)
 {
 	struct darmoshark_device *ds =
@@ -252,40 +355,49 @@ static void ds_poll(struct work_struct *work)
 		return;
 
 	mutex_lock(&ds->io_lock);
-	/*
-	 * usbhid_output_report() hands this buffer to usb_interrupt_msg(),
-	 * which maps it for DMA. A stack buffer is rejected by the HCD with
-	 * "transfer buffer is on stack" (-EAGAIN), so keep it in the
-	 * devm-allocated device state.
-	 */
-	darmoshark_build_power(ds->cmd_buf, ds->wireless);
-
-	spin_lock_irqsave(&ds->state_lock, flags);
-	ds->resp_pending = true;
-	ds->resp_valid = false;
-	spin_unlock_irqrestore(&ds->state_lock, flags);
-	reinit_completion(&ds->resp);
-
-	ret = hid_hw_output_report(ds->hdev, ds->cmd_buf, DS_REPORT_LEN);
-	if (ret > 0 &&
-	    wait_for_completion_timeout(&ds->resp,
-					msecs_to_jiffies(DS_READ_TIMEOUT_MS))) {
-		spin_lock_irqsave(&ds->state_lock, flags);
-		if (ds->resp_valid) {
-			memcpy(response, ds->resp_buf, DS_REPORT_LEN);
-			got = true;
-		}
-		spin_unlock_irqrestore(&ds->state_lock, flags);
+	if (ds->telink) {
+		got = ds_query_telink(ds, &percent);
+		mutex_unlock(&ds->io_lock);
 	} else {
-		hid_dbg(ds->hdev, "battery query failed: %d\n", ret);
+		/*
+		 * usbhid_output_report() hands this buffer to usb_interrupt_msg(),
+		 * which maps it for DMA. A stack buffer is rejected by the HCD with
+		 * "transfer buffer is on stack" (-EAGAIN), so keep it in the
+		 * devm-allocated device state.
+		 */
+		darmoshark_build_power(ds->cmd_buf, ds->wireless);
+
+		spin_lock_irqsave(&ds->state_lock, flags);
+		ds->resp_pending = true;
+		ds->resp_valid = false;
+		spin_unlock_irqrestore(&ds->state_lock, flags);
+		reinit_completion(&ds->resp);
+
+		ret = hid_hw_output_report(ds->hdev, ds->cmd_buf, DS_REPORT_LEN);
+		if (ret > 0 &&
+		    wait_for_completion_timeout(&ds->resp,
+						msecs_to_jiffies(DS_READ_TIMEOUT_MS))) {
+			spin_lock_irqsave(&ds->state_lock, flags);
+			if (ds->resp_valid) {
+				memcpy(response, ds->resp_buf, DS_REPORT_LEN);
+				got = true;
+			}
+			spin_unlock_irqrestore(&ds->state_lock, flags);
+		} else {
+			hid_dbg(ds->hdev, "battery query failed: %d\n", ret);
+		}
+
+		spin_lock_irqsave(&ds->state_lock, flags);
+		ds->resp_pending = false;
+		spin_unlock_irqrestore(&ds->state_lock, flags);
+		mutex_unlock(&ds->io_lock);
+
+		if (got)
+			got = darmoshark_parse_power(response, DS_REPORT_LEN,
+						     &percent) != 0;
 	}
 
-	spin_lock_irqsave(&ds->state_lock, flags);
-	ds->resp_pending = false;
-	spin_unlock_irqrestore(&ds->state_lock, flags);
-	mutex_unlock(&ds->io_lock);
-
-	if (got && darmoshark_parse_power(response, DS_REPORT_LEN, &percent))
+	if (got)
 		ds_update(ds, percent);
 
 	if (READ_ONCE(ds->stopping))
@@ -300,15 +412,33 @@ static void ds_poll(struct work_struct *work)
 	queue_delayed_work(ds_wq, &ds->work, msecs_to_jiffies(delay));
 }
 
-/* Only the configuration collection (usage page 0xff0a) answers the vendor
- * protocol. The receiver shares its VID/PID across four HID interfaces, and
- * hid-generic declines every interface whose ID matches another driver, so
- * the non-configuration interfaces must be handled generically here. */
+/* Only the configuration collection (usage page 0xff0a on Nordic, 0x008c on
+ * Telink) answers the vendor protocol. Each receiver shares its VID/PID across
+ * multiple HID interfaces, and hid-generic declines every interface whose ID
+ * matches another driver, so the non-configuration interfaces must be handled
+ * generically here. */
 static bool ds_descriptor_is_config(const struct hid_device *hdev)
 {
 	unsigned int i;
 
-	if (!hdev->dev_rdesc || hdev->dev_rsize < 3)
+	if (!hdev->dev_rdesc)
+		return false;
+
+	if (hdev->vendor == DS_TELINK_VENDOR_ID) {
+		if (hdev->dev_rsize < 4)
+			return false;
+		for (i = 0; i + 3 < hdev->dev_rsize; i++) {
+			/* Usage Page 0x008C, Usage 0x0001: 05 8c 09 01 */
+			if (hdev->dev_rdesc[i] == 0x05 &&
+			    hdev->dev_rdesc[i + 1] == 0x8c &&
+			    hdev->dev_rdesc[i + 2] == 0x09 &&
+			    hdev->dev_rdesc[i + 3] == 0x01)
+				return true;
+		}
+		return false;
+	}
+
+	if (hdev->dev_rsize < 3)
 		return false;
 
 	for (i = 0; i + 2 < hdev->dev_rsize; i++) {
@@ -323,11 +453,43 @@ static bool ds_descriptor_is_config(const struct hid_device *hdev)
 
 static bool ds_has_vendor_collection(const struct hid_device *hdev)
 {
+	unsigned int target = hdev->vendor == DS_TELINK_VENDOR_ID
+				      ? ((0x008cU << 16) | 0x0001U)
+				      : ((0xff0aU << 16) | 0x0001U);
 	unsigned int i;
 
 	for (i = 0; i < hdev->maxcollection; i++) {
-		if (hdev->collection[i].usage == ((0xff0aU << 16) | 0x0001U))
+		if (hdev->collection[i].usage == target)
 			return true;
+	}
+	return false;
+}
+
+static bool ds_is_wireless_pid(u32 vendor, u32 product)
+{
+	if (vendor == DS_VENDOR_ID)
+		return product == DS_RECEIVER_PID;
+	if (vendor == DS_TELINK_VENDOR_ID)
+		return product == DS_TELINK_RECEIVER_PID ||
+		       product == DS_TELINK_2K_RECEIVER_PID;
+	return false;
+}
+
+static bool ds_is_supported_usb_id(u32 vendor, u32 product)
+{
+	if (vendor == DS_VENDOR_ID)
+		return product == DS_WIRED_PID || product == DS_RECEIVER_PID;
+	if (vendor == DS_TELINK_VENDOR_ID) {
+		switch (product) {
+		case DS_N3_WIRED_PID:
+		case DS_M3_WIRED_PID:
+		case DS_M3S_WIRED_PID:
+		case DS_TELINK_RECEIVER_PID:
+		case DS_TELINK_2K_RECEIVER_PID:
+			return true;
+		default:
+			return false;
+		}
 	}
 	return false;
 }
@@ -352,7 +514,10 @@ static int ds_probe(struct hid_device *hdev, const struct hid_device_id *id)
 		return ret;
 	if (!ds_has_vendor_collection(hdev)) {
 		hid_warn(hdev,
-			 "vendor usage page without a 0xff0a:0x0001 collection; using generic input\n");
+			 "vendor usage page without a %s collection; using generic input\n",
+			 hdev->vendor == DS_TELINK_VENDOR_ID
+				 ? "0x008c:0x0001"
+				 : "0xff0a:0x0001");
 		hdev->quirks |= HID_QUIRK_INPUT_PER_APP;
 		return hid_hw_start(hdev, HID_CONNECT_DEFAULT);
 	}
@@ -376,7 +541,8 @@ static int ds_probe(struct hid_device *hdev, const struct hid_device_id *id)
 		return -ENOMEM;
 	}
 	ds->hdev = hdev;
-	ds->wireless = hdev->product == DS_RECEIVER_PID;
+	ds->telink = hdev->vendor == DS_TELINK_VENDOR_ID;
+	ds->wireless = ds_is_wireless_pid(hdev->vendor, hdev->product);
 	mutex_init(&ds->io_lock);
 	spin_lock_init(&ds->state_lock);
 	init_completion(&ds->resp);
@@ -384,7 +550,8 @@ static int ds_probe(struct hid_device *hdev, const struct hid_device_id *id)
 	hid_set_drvdata(hdev, ds);
 
 	queue_delayed_work(ds_wq, &ds->work, msecs_to_jiffies(DS_FIRST_POLL_MS));
-	hid_info(hdev, "Darmoshark battery channel ready (%s)\n",
+	hid_info(hdev, "Darmoshark battery channel ready (%s, %s)\n",
+		 ds->telink ? "telink" : "nordic",
 		 ds->wireless ? "2.4 GHz" : "wired");
 	return 0;
 }
@@ -404,6 +571,11 @@ static void ds_remove(struct hid_device *hdev)
 static const struct hid_device_id darmoshark_devices[] = {
 	{ HID_USB_DEVICE(DS_VENDOR_ID, DS_WIRED_PID) },
 	{ HID_USB_DEVICE(DS_VENDOR_ID, DS_RECEIVER_PID) },
+	{ HID_USB_DEVICE(DS_TELINK_VENDOR_ID, DS_N3_WIRED_PID) },
+	{ HID_USB_DEVICE(DS_TELINK_VENDOR_ID, DS_M3_WIRED_PID) },
+	{ HID_USB_DEVICE(DS_TELINK_VENDOR_ID, DS_M3S_WIRED_PID) },
+	{ HID_USB_DEVICE(DS_TELINK_VENDOR_ID, DS_TELINK_RECEIVER_PID) },
+	{ HID_USB_DEVICE(DS_TELINK_VENDOR_ID, DS_TELINK_2K_RECEIVER_PID) },
 	{ }
 };
 MODULE_DEVICE_TABLE(hid, darmoshark_devices);
@@ -423,9 +595,8 @@ static int ds_rebind_device(struct device *dev, void *data)
 
 	(void)data;
 
-	if (hdev->bus != BUS_USB || hdev->vendor != DS_VENDOR_ID)
-		return 0;
-	if (hdev->product != DS_WIRED_PID && hdev->product != DS_RECEIVER_PID)
+	if (hdev->bus != BUS_USB ||
+	    !ds_is_supported_usb_id(hdev->vendor, hdev->product))
 		return 0;
 	if (hdev->driver == &darmoshark_driver)
 		return 0;
